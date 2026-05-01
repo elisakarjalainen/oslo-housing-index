@@ -1,0 +1,9 @@
+local_output/
+__pycache__/
+*.pyc
+*.pyo
+.claude
+.env
+.venv
+venv/
+.DS_Store
