@@ -29,13 +29,14 @@ Output is written to `local_output/finn_listings_YYYYMMDD_HHMMSS.json` (the fold
 ```json
 {
   "fetched_at": "2026-05-01T16:45:00",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "source": "https://www.finn.no/realestate/lettings/search.html?location=0.20061",
   "listing_count": 247,
   "listings": [
     {
       "page": 1,
-      "postal_code": "0150",
+      "address": "Storgata 1, Oslo",
+      "postal_code": "0155",
       "price": 18500,
       "area_m2": 52,
       "property_type": "Leilighet",
@@ -55,12 +56,19 @@ Output is written to `local_output/finn_listings_YYYYMMDD_HHMMSS.json` (the fold
 | `--min-delay S` | 1.0 | Minimum seconds between requests |
 | `--max-delay S` | 2.0 | Maximum seconds between requests |
 | `--output FILE` | auto-timestamped | Output file path |
+| `--no-geocode` | off | Skip Kartverket postal code lookup |
 
 Example — fetch at most 200 listings:
 
 ```
 python fetch_listings.py --max-ads 200
 ```
+
+## Geocoding
+
+Each listing's address is extracted from the search card and stored in the `address` field. When a postal code is not directly visible in the card text, the scraper calls the [Kartverket address API](https://ws.geonorge.no/adresser/v1/) to resolve it.
+
+Results are cached in `local_output/address_postal_lookup.json` and reused across runs to avoid redundant API calls. Pass `--no-geocode` to skip this step entirely.
 
 ## Legal considerations
 
