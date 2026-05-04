@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import random
 import re
 import time
@@ -11,25 +12,18 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import requests
 from bs4 import BeautifulSoup
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
+
+log = logging.getLogger(__name__)
 
 LISTING_URL = "https://www.finn.no/realestate/lettings/search.html?location=0.20061"
 HEADERS = {"User-Agent": f"oslo-housing-index/{__version__} (personal market research project; non-commercial)"}
-<<<<<<< HEAD
-=======
 KARTVERKET_API = "https://ws.geonorge.no/adresser/v1/sok"
->>>>>>> d9330e9 (Initial commit with my changes)
 
 RE_PRICE = re.compile(r'(\d{1,3}(?:[\s \xa0]\d{3})*)\s*kr')
 RE_AREA = re.compile(r'(\d{1,4})\s*(?:m²|m2)')
 RE_SOV = re.compile(r'(\d+)\s*soverom', re.I)
 RE_FINN_HREF = re.compile(r'/realestate/lettings(?:external)?/ad\.html\?finnkode=(\d+)')
-<<<<<<< HEAD
-RE_POSTAL = re.compile(r'\b(\d{4})\b')
-RE_AGENCY = re.compile(r'\b(?:eiendomsmegler|megler|bolig(?:salg|utleie)|AS|property|realty)\b', re.I)
-RE_ADDR_CLASSES = [re.compile(c, re.I) for c in ('sf-realestate-location', 'location', 'address')]
-
-=======
 # Norwegian postal codes are 4 digits, typically preceded by ", " and followed by a capital letter (city name).
 # This pattern avoids matching years, areas, or prices.
 RE_POSTAL = re.compile(r'(?:,\s*|\s)(\d{4})\s+[A-ZÆØÅ]')
@@ -37,6 +31,12 @@ RE_AGENCY = re.compile(r'\b(?:eiendomsmegler|megler|bolig(?:salg|utleie)|AS|prop
 RE_ADDR_CLASSES = [re.compile(c, re.I) for c in ('sf-realestate-location', 'location', 'address')]
 
 _geocode_cache: dict[str, str | None] = {}
+
+_LOOKUP_TABLE_PATH = Path('local_output/address_postal_lookup.json')
+_address_lookup: dict[str, str] = {}
+if _LOOKUP_TABLE_PATH.exists():
+    _raw = json.loads(_LOOKUP_TABLE_PATH.read_text(encoding='utf-8'))
+    _address_lookup = {k.lower(): v for k, v in _raw.items() if v}
 
 
 _RE_HOUSE_LETTER = re.compile(r'(\d+)\s*[A-Za-z]$')
@@ -56,6 +56,10 @@ def geocode_postal_code(address: str) -> str | None:
     """Resolve a 'Street, Municipality' address to its Norwegian postal code via Kartverket."""
     if address in _geocode_cache:
         return _geocode_cache[address]
+    hit = _address_lookup.get(address.lower())
+    if hit:
+        _geocode_cache[address] = hit
+        return hit
     parts = address.rsplit(',', 1)
     if len(parts) != 2:
         _geocode_cache[address] = None
@@ -77,7 +81,6 @@ def geocode_postal_code(address: str) -> str | None:
     return result
 
 
->>>>>>> d9330e9 (Initial commit with my changes)
 PROPERTY_TYPES: list[tuple[str, str]] = [
     ('Hybel', 'Hybel'),
     ('Rom i bofellesskap', 'Rom i bofellesskap'),
@@ -90,10 +93,7 @@ PROPERTY_TYPES: list[tuple[str, str]] = [
 _url_parts = urlparse(LISTING_URL)
 _base_params = [(k, v) for k, vs in parse_qs(_url_parts.query).items() for v in vs if k != 'page']
 
-<<<<<<< HEAD
 
-=======
->>>>>>> d9330e9 (Initial commit with my changes)
 def extract_listings_from_page(soup: BeautifulSoup, page_num: int) -> list[tuple[str, dict[str, Any]]]:
     """Returns (finnkode, data) pairs; finnkode is for deduplication only."""
     results: list[tuple[str, dict[str, Any]]] = []
@@ -115,10 +115,7 @@ def extract_listings_from_page(soup: BeautifulSoup, page_num: int) -> list[tuple
 
         data: dict[str, Any] = {
             "page": page_num,
-<<<<<<< HEAD
-=======
             "address": None,
->>>>>>> d9330e9 (Initial commit with my changes)
             "postal_code": None,
             "price": None,
             "area_m2": None,
@@ -127,17 +124,6 @@ def extract_listings_from_page(soup: BeautifulSoup, page_num: int) -> list[tuple
             "is_agency": False,
         }
 
-<<<<<<< HEAD
-        search_text = card_text
-        for pattern in RE_ADDR_CLASSES:
-            addr_el = card.find(class_=pattern)
-            if addr_el:
-                search_text = addr_el.get_text(strip=True)
-                break
-        m = RE_POSTAL.search(search_text)
-        if m:
-            data['postal_code'] = m.group(1)
-=======
         addr_el = None
         for pattern in RE_ADDR_CLASSES:
             addr_el = card.find(class_=pattern)
@@ -153,7 +139,6 @@ def extract_listings_from_page(soup: BeautifulSoup, page_num: int) -> list[tuple
             m = RE_POSTAL.search(address_text)
             if m:
                 data['postal_code'] = m.group(1)
->>>>>>> d9330e9 (Initial commit with my changes)
 
         m = RE_PRICE.search(card_text)
         if m:
@@ -189,12 +174,11 @@ def main(
     min_delay: float = 1.0,
     max_delay: float = 2.0,
     output_file: str | None = None,
-<<<<<<< HEAD
-=======
     geocode: bool = True,
->>>>>>> d9330e9 (Initial commit with my changes)
 ) -> list[dict[str, Any]]:
     """Crawl listing pages and extract aggregate market data (no individual ad visits)."""
+    if _address_lookup:
+        log.info('Loaded %d entries from address lookup table', len(_address_lookup))
     page = 1
     seen_finnkodes: set[str] = set()
     all_data: list[dict[str, Any]] = []
@@ -202,51 +186,67 @@ def main(
 
     while True:
         if max_pages is not None and page > max_pages:
-            print(f'Reached max_pages limit: {max_pages}')
+            log.info('Reached max_pages limit: %d', max_pages)
             break
 
-        print(f'Page {page} ...', end=' ', flush=True)
+        log.info('Fetching page %d ...', page)
+        if page > 1:
+            time.sleep(random.uniform(min_delay, max_delay))
         try:
             r = requests.get(_build_page_url(page), headers=HEADERS, timeout=20)
             r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 500:
+                log.info('Page %d returned 500 — past last page, stopping', page)
+            else:
+                log.error('HTTP error on page %d: %s', page, e)
+            break
         except Exception as e:
-            print(f'error: {e}')
+            log.error('Failed to fetch page %d: %s', page, e)
             break
 
         soup = BeautifulSoup(r.content, 'html.parser', from_encoding='utf-8')
         page_listings = extract_listings_from_page(soup, page)
 
         if not page_listings:
-            print('no listings found - stopping')
+            log.info('No listings found on page %d — stopping', page)
             break
 
         new = [(fk, d) for fk, d in page_listings if fk not in seen_finnkodes]
         skipped = len(page_listings) - len(new)
         if skipped:
             dupe_pages.append((page, skipped))
-        print(f'{len(new)} listings')
+            log.warning('Page %d: %d duplicate(s) skipped', page, skipped)
+        log.info('Page %d: %d new listings', page, len(new))
 
         if not new:
-            print(f'No new listings on page {page} - stopping')
+            log.info('No new listings on page %d — stopping', page)
             break
 
         if max_ads is not None:
             new = new[:max_ads - len(all_data)]
+        to_geocode = sum(1 for _, d in new if geocode and d['postal_code'] is None and d.get('address'))
+        if to_geocode:
+            table_hits = sum(1 for _, d in new if geocode and d['postal_code'] is None and d.get('address') and d['address'].lower() in _address_lookup)
+            api_calls = to_geocode - table_hits
+            parts: list[str] = []
+            if table_hits:
+                parts.append(f'{table_hits} from lookup table')
+            if api_calls:
+                parts.append(f'{api_calls} via Kartverket')
+            log.info('Page %d: looking up %d postal code(s) — %s', page, to_geocode, ', '.join(parts))
         for finnkode, data in new:
             seen_finnkodes.add(finnkode)
-<<<<<<< HEAD
-=======
             if geocode and data['postal_code'] is None and data.get('address'):
                 data['postal_code'] = geocode_postal_code(data['address'])
-                time.sleep(0.1)
->>>>>>> d9330e9 (Initial commit with my changes)
+                if _address_lookup.get(data['address'].lower()) is None:
+                    time.sleep(0.1)
             all_data.append(data)
         if max_ads is not None and len(all_data) >= max_ads:
-            print(f'Reached max_ads limit: {max_ads}')
+            log.info('Reached max_ads limit: %d', max_ads)
             break
 
         page += 1
-        time.sleep(random.uniform(min_delay, max_delay))
 
     now = datetime.now()
     timestamp_slug = now.strftime('%Y%m%d_%H%M%S')
@@ -263,22 +263,38 @@ def main(
         json.dump(payload, f, ensure_ascii=False, indent=2)
     total_dupes = sum(n for _, n in dupe_pages)
     dupe_summary = ', '.join(f'p{p}:{n}' for p, n in dupe_pages) if dupe_pages else 'none'
-    print(f'\nWrote {out} with {len(all_data)} entries')
-    print(f'Cross-page duplicates: {total_dupes} (pages: {dupe_summary})')
+    log.info('Wrote %s with %d entries', out, len(all_data))
+    log.info('Cross-page duplicates: %d (pages: %s)', total_dupes, dupe_summary)
+
+    new_lookup_entries = {
+        d['address']: d['postal_code']
+        for d in all_data
+        if d.get('address') and d.get('postal_code') and d['address'].lower() not in _address_lookup
+    }
+    if new_lookup_entries:
+        _address_lookup.update({k.lower(): v for k, v in new_lookup_entries.items()})
+        existing: dict[str, str] = {}
+        if _LOOKUP_TABLE_PATH.exists():
+            existing = json.loads(_LOOKUP_TABLE_PATH.read_text(encoding='utf-8'))
+        existing.update(new_lookup_entries)
+        _LOOKUP_TABLE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _LOOKUP_TABLE_PATH.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding='utf-8')
+        log.info('Lookup table: added %d new entry/entries (total %d)', len(new_lookup_entries), len(existing))
+    else:
+        log.info('Lookup table: no new entries')
+
     return all_data
 
 
 def _cli() -> None:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
     p = argparse.ArgumentParser(description='Fetch rental listings from FINN with pagination')
     p.add_argument('--max-pages', type=int, default=None)
     p.add_argument('--max-ads', type=int, default=None)
     p.add_argument('--min-delay', type=float, default=1.0)
     p.add_argument('--max-delay', type=float, default=2.0)
     p.add_argument('--output', type=str, default=None)
-<<<<<<< HEAD
-=======
     p.add_argument('--no-geocode', action='store_true', help='Skip Kartverket postal code lookup')
->>>>>>> d9330e9 (Initial commit with my changes)
     args = p.parse_args()
     main(
         max_pages=args.max_pages,
@@ -286,10 +302,7 @@ def _cli() -> None:
         min_delay=args.min_delay,
         max_delay=args.max_delay,
         output_file=args.output,
-<<<<<<< HEAD
-=======
         geocode=not args.no_geocode,
->>>>>>> d9330e9 (Initial commit with my changes)
     )
 
 
